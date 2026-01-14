@@ -1,0 +1,8 @@
+{
+  "name": "ProctorAI - Research Grade Integrity",
+  "description": "Browser-only exam integrity assistant using on-device computer vision.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
