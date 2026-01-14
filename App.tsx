@@ -16,7 +16,7 @@ const INITIAL_CONFIG: AppConfig = {
   privacyMode: true,
   invisibleProctor: false,
   examMode: 'MCQ',
-  demoMode: true, // Enable demo mode by default to ensure UI shows
+  demoMode: false, // Disable demo mode to test real detection
 };
 
 const INITIAL_STATUS: DetectionStatus = {
@@ -135,6 +135,9 @@ const App: React.FC = () => {
     const faceResults = latestFaceResults.current;
     const handResults = latestHandResults.current;
 
+    // Debug: Log detection status
+    console.log("Processing frame - Face detected:", !!faceResults?.multiFaceLandmarks?.length, "Hands detected:", !!handResults?.multiHandLandmarks?.length);
+
     let currentStatus = { ...INITIAL_STATUS };
     let deduction = 0;
 
@@ -159,6 +162,11 @@ const App: React.FC = () => {
           window.drawConnectors(ctx, landmarks, window.FACEMESH_LEFT_EYE, { color: '#ffffff', lineWidth: 1 });
           window.drawConnectors(ctx, landmarks, window.FACEMESH_LIPS, { color: '#ffffff', lineWidth: 1 });
           window.drawConnectors(ctx, landmarks, window.FACEMESH_FACE_OVAL, { color: '#ffffff50', lineWidth: 1 });
+      }
+      
+      // Draw face landmarks for debugging
+      if (window.drawLandmarks) {
+          window.drawLandmarks(ctx, landmarks, { color: '#00ff00', lineWidth: 1, radius: 2 });
       }
 
       // Head Pose & Exam Mode Logic
@@ -219,10 +227,10 @@ const App: React.FC = () => {
             const connections = window.HAND_CONNECTIONS || (window.Hands ? (window.Hands as any).HAND_CONNECTIONS : undefined);
             
             if (window.drawConnectors && connections) {
-                window.drawConnectors(ctx, landmarks, connections, { color: '#ffffff', lineWidth: 1 });
+                window.drawConnectors(ctx, landmarks, connections, { color: '#ff0000', lineWidth: 2 });
             }
             if (window.drawLandmarks) {
-                window.drawLandmarks(ctx, landmarks, { color: '#ffffff', lineWidth: 1, radius: 1 });
+                window.drawLandmarks(ctx, landmarks, { color: '#ffff00', lineWidth: 2, radius: 3 });
             }
 
             if (currentStatus.faceDetected && faceResults && faceResults.multiFaceLandmarks && faceResults.multiFaceLandmarks[0]) {
