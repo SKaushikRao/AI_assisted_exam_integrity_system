@@ -16,7 +16,7 @@ const INITIAL_CONFIG: AppConfig = {
   privacyMode: true,
   invisibleProctor: false,
   examMode: 'MCQ',
-  demoMode: false,
+  demoMode: true, // Enable demo mode by default to ensure UI shows
 };
 
 const INITIAL_STATUS: DetectionStatus = {
@@ -282,6 +282,14 @@ const App: React.FC = () => {
   useEffect(() => {
     let active = true;
 
+    // Set a timeout to ensure UI shows even if MediaPipe fails
+    const timeoutId = setTimeout(() => {
+      if (active) {
+        setIsLoading(false);
+        console.log("Loading timeout reached - showing UI anyway");
+      }
+    }, 3000);
+
     const initAI = async () => {
       if (!window.FaceMesh || !window.Hands || !window.Camera) {
         console.warn("MediaPipe global not found, retrying...");
@@ -289,6 +297,7 @@ const App: React.FC = () => {
         return;
       }
 
+      clearTimeout(timeoutId);
       console.log("Initializing MediaPipe Models...");
 
       const faceMesh = new window.FaceMesh({
