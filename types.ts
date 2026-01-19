@@ -3,7 +3,7 @@ export type ExamMode = 'MCQ' | 'Coding' | 'Written';
 export interface IntegrityEvent {
   id: string;
   timestamp: number;
-  type: 'LOOKING_AWAY' | 'FACE_MISSING' | 'MULTIPLE_FACES' | 'TALKING' | 'HAND_ERROR';
+  type: 'LOOKING_AWAY' | 'FACE_MISSING' | 'MULTIPLE_FACES' | 'TALKING' | 'HAND_ERROR' | 'SUSPICIOUS_GAZE' | 'SUSPICIOUS_MOVEMENT';
   severity: 'LOW' | 'MEDIUM' | 'HIGH';
   screenshotUrl?: string; // Data URL
   description: string;
@@ -16,6 +16,8 @@ export interface DetectionStatus {
   isLookingAway: boolean;
   multipleFaces: boolean;
   handNearFace: boolean;
+  suspiciousGaze: boolean;
+  suspiciousMovement: boolean;
 }
 
 export interface AppConfig {
@@ -23,6 +25,7 @@ export interface AppConfig {
   invisibleProctor: boolean;
   examMode: ExamMode;
   demoMode: boolean;
+  voiceActivityDetection: boolean; // Toggle for voice activity detection
 }
 
 // MediaPipe Global Types (since we load via script tags)

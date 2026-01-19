@@ -2,8 +2,8 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import Timeline from './components/Timeline';
 import ControlPanel from './components/ControlPanel';
 import { IntegrityEvent, AppConfig, DetectionStatus } from './types';
-import { calculateHeadPose, calculateMouthOpenness, calculateHandFaceDistance } from './services/geometryUtils';
-import { analyzeFrameWithPuter, AIAnalysisResult } from './services/groqService';
+import { calculateHeadPose, calculateMouthOpenness, calculateHandFaceDistance, detectTalkingActivity, detectEyeGaze, detectSuspiciousHeadMovement } from './services/geometryUtils';
+import { analyzeFrameWithPuter, AIAnalysisResult, MediaPipeStatus } from './services/groqService';
 
 // --- Constants ---
 const MAX_SCORE = 100;
@@ -17,6 +17,7 @@ const INITIAL_CONFIG: AppConfig = {
   invisibleProctor: false,
   examMode: 'MCQ',
   demoMode: false, // Disable demo mode to test real detection
+  voiceActivityDetection: true, // Enable voice activity detection by default
 };
 
 const INITIAL_STATUS: DetectionStatus = {
@@ -26,6 +27,8 @@ const INITIAL_STATUS: DetectionStatus = {
   isLookingAway: false,
   multipleFaces: false,
   handNearFace: false,
+  suspiciousGaze: false,
+  suspiciousMovement: false,
 };
 
 const App: React.FC = () => {
@@ -41,7 +44,7 @@ const App: React.FC = () => {
   const [cameraPermission, setCameraPermission] = useState(false);
 
   // AI State
-  const [aiResult, setAiResult] = useState<AIAnalysisResult>({ status: 'INIT', message: "Initializing Vision AI...", model: "System" });
+  const [aiResult, setAiResult] = useState<AIAnalysisResult>({ status: 'INIT', message: "MediaPipe AI Ready - Advanced cheating detection", model: "MediaPipe (Enhanced)" });
   const [isAiAnalyzing, setIsAiAnalyzing] = useState(false);
 
   // Logic Timers
@@ -57,6 +60,7 @@ const App: React.FC = () => {
   
   const latestFaceResults = useRef<any>(null);
   const latestHandResults = useRef<any>(null);
+  const previousFaceLandmarks = useRef<any[]>([]);
 
   // --- Helper: Capture Screenshot (High Res for Logs) ---
   const captureScreenshot = useCallback((): string | undefined => {
@@ -192,20 +196,45 @@ const App: React.FC = () => {
         lookingAwayStartTime.current = null;
       }
 
-      // Talking
-      const mouthOpen = calculateMouthOpenness(landmarks);
-      if (mouthOpen > TALK_THRESHOLD) {
+      // Enhanced Talking Detection
+      const talkingDetection = detectTalkingActivity(landmarks, previousFaceLandmarks.current);
+      if (talkingDetection.isTalking && config.voiceActivityDetection) {
          currentStatus.isTalking = true;
          if (!talkingStartTime.current) talkingStartTime.current = Date.now();
          else if (Date.now() - talkingStartTime.current > 1500) {
-             deduction += 0.2;
+             deduction += 0.3; // Increased penalty for enhanced detection
              if (Date.now() - lastEventTime.current > 4000) {
-                 logEvent('TALKING', 'MEDIUM', 'Sustained mouth movement detected.');
+                 const confidence = Math.round(talkingDetection.confidence * 100);
+                 logEvent('TALKING', 'MEDIUM', `Talking detected (${confidence}% confidence).`);
              }
          }
       } else {
           talkingStartTime.current = null;
       }
+
+      // Enhanced Eye Gaze Detection
+      const eyeGaze = detectEyeGaze(landmarks);
+      if (eyeGaze.suspicious) {
+          currentStatus.suspiciousGaze = true;
+          deduction += 0.2;
+          if (Date.now() - lastEventTime.current > 5000) {
+              logEvent('SUSPICIOUS_GAZE', 'MEDIUM', `Suspicious eye gaze pattern detected.`);
+          }
+      }
+
+      // Enhanced Head Movement Detection
+      const headMovement = detectSuspiciousHeadMovement(landmarks, previousFaceLandmarks.current);
+      if (headMovement.rapidMovement || headMovement.lookingAround) {
+          currentStatus.suspiciousMovement = true;
+          deduction += 0.4;
+          if (Date.now() - lastEventTime.current > 5000) {
+              const movementType = headMovement.rapidMovement ? 'rapid head movement' : 'looking around frequently';
+              logEvent('SUSPICIOUS_MOVEMENT', 'HIGH', `${movementType} detected.`);
+          }
+      }
+
+      // Store current landmarks for next frame comparison
+      previousFaceLandmarks.current = [...landmarks];
 
       missingFaceStartTime.current = null;
 
@@ -221,22 +250,48 @@ const App: React.FC = () => {
     }
 
     // --- Hand Logic ---
+    // Simple hand detection without complex model loading
     if (handResults && handResults.multiHandLandmarks && handResults.multiHandLandmarks.length > 0) {
         currentStatus.handsDetected = true;
+        
         for (const landmarks of handResults.multiHandLandmarks) {
-            const connections = window.HAND_CONNECTIONS || (window.Hands ? (window.Hands as any).HAND_CONNECTIONS : undefined);
-            
-            if (window.drawConnectors && connections) {
-                window.drawConnectors(ctx, landmarks, connections, { color: '#ff0000', lineWidth: 2 });
-            }
+            // Simple hand visualization - just draw landmarks
             if (window.drawLandmarks) {
-                window.drawLandmarks(ctx, landmarks, { color: '#ffff00', lineWidth: 2, radius: 3 });
+                window.drawLandmarks(ctx, landmarks, { 
+                    color: '#ff6b35', // Orange color for hands
+                    lineWidth: 2, 
+                    radius: 3 
+                });
+            }
+            
+            // Draw hand connections if available
+            const connections = window.HAND_CONNECTIONS || (window.Hands ? (window.Hands as any).HAND_CONNECTIONS : undefined);
+            if (window.drawConnectors && connections) {
+                window.drawConnectors(ctx, landmarks, connections, { 
+                    color: '#ff6b35', // Orange skeleton
+                    lineWidth: 2 
+                });
             }
 
+            // Check hand near face
             if (currentStatus.faceDetected && faceResults && faceResults.multiFaceLandmarks && faceResults.multiFaceLandmarks[0]) {
                 const dist = calculateHandFaceDistance(landmarks, faceResults.multiFaceLandmarks[0]);
                 if (dist < 0.3) { 
                     currentStatus.handNearFace = true;
+                    
+                    // Draw warning line between hand and face
+                    ctx.strokeStyle = '#ff0000';
+                    ctx.lineWidth = 2;
+                    ctx.setLineDash([5, 5]);
+                    ctx.beginPath();
+                    const handCenter = landmarks[9]; // Middle finger MCP joint
+                    const faceCenter = faceResults.multiFaceLandmarks[0][1]; // Nose tip
+                    if (handCenter && faceCenter) {
+                        ctx.moveTo(handCenter.x * width, handCenter.y * height);
+                        ctx.lineTo(faceCenter.x * width, faceCenter.y * height);
+                        ctx.stroke();
+                    }
+                    ctx.setLineDash([]);
                 }
             }
         }
@@ -262,29 +317,38 @@ const App: React.FC = () => {
     processFrameRef.current = processFrame;
   }, [processFrame]);
 
-  // --- AI Integration Loop (Puter.js) ---
+  // --- AI Integration (Event-Triggered + Periodic) ---
+  const triggerAIAnalysis = useCallback(async (eventType: string, frameData?: string) => {
+    // DISABLED: Using MediaPipe-only detection to prevent random score drops
+    console.log("AI analysis disabled - Using MediaPipe detection only");
+    return;
+  }, []);
+
+  // --- High-Severity Event Detection ---
+  const previousStatusRef = useRef<DetectionStatus>(INITIAL_STATUS);
+  
   useEffect(() => {
-    if (config.demoMode || !cameraPermission) return;
+    const prevStatus = previousStatusRef.current;
+    
+    // Check for high-severity events that need AI verification
+    if (status.multipleFaces && !prevStatus.multipleFaces) {
+      triggerAIAnalysis("MULTIPLE_FACES_DETECTED");
+    }
+    
+    if (status.faceDetected && !prevStatus.faceDetected && missingFaceStartTime.current && 
+        Date.now() - missingFaceStartTime.current > 5000) {
+      triggerAIAnalysis("FACE_MISSING_LONG_DURATION");
+    }
+    
+    previousStatusRef.current = status;
+  }, [status, triggerAIAnalysis]);
 
-    const aiInterval = setInterval(async () => {
-        const frame = captureLowResFrame();
-        if (frame) {
-            setIsAiAnalyzing(true);
-            const result = await analyzeFrameWithPuter(frame);
-            setAiResult(result);
-            setIsAiAnalyzing(false);
-            
-            // If AI explicitly detects cheating (SUSPICIOUS status), log it
-            if (result.status === 'SUSPICIOUS') {
-               logEvent('LOOKING_AWAY', 'HIGH', `AI Flag: ${result.message}`);
-               setScore(s => Math.max(0, s - 5)); // Heavy penalty for LLM verified suspicion
-            }
-        }
-    }, 6000); // Check every 6 seconds
-
-    return () => clearInterval(aiInterval);
-  }, [cameraPermission, config.demoMode, captureLowResFrame, logEvent]);
-
+  // --- Periodic AI Analysis (Every 5 seconds) ---
+  useEffect(() => {
+    // DISABLED: Using MediaPipe-only detection to prevent random score drops
+    console.log("Periodic AI analysis disabled - Using MediaPipe detection only");
+    return () => {};
+  }, []);
 
   // --- Initialization Effect ---
   useEffect(() => {
@@ -328,8 +392,9 @@ const App: React.FC = () => {
       });
       hands.setOptions({
         maxNumHands: 2,
-        minDetectionConfidence: 0.5,
-        minTrackingConfidence: 0.5,
+        modelComplexity: 1, // Use simpler model
+        minDetectionConfidence: 0.7, // Higher confidence threshold
+        minTrackingConfidence: 0.7,
       });
 
       hands.onResults((results: any) => {
@@ -472,10 +537,17 @@ const App: React.FC = () => {
                 <div className="absolute w-64 h-64 border border-white/30 rounded-full animate-pulse z-0 pointer-events-none" />
             )}
 
-            {/* Invisible Proctor Warning Toast */}
-            {!config.invisibleProctor && (status.isLookingAway || status.isTalking || status.multipleFaces) && (
-                <div className="absolute top-20 bg-black/80 border-l-4 border-red-600 backdrop-blur-md px-6 py-4 shadow-2xl animate-bounce z-50">
-                    <div className="text-red-500 font-bold uppercase tracking-widest text-xs mb-1">Warning</div>
+            {/* Multiple Faces Visual Indicator */}
+            {status.multipleFaces && (
+                <div className="absolute top-4 right-4 z-30 bg-red-600 text-white px-3 py-2 rounded-full flex items-center space-x-2 animate-pulse">
+                    <span className="text-lg">👥</span>
+                    <span className="text-sm font-bold">MULTIPLE FACES</span>
+                </div>
+            )}
+
+            {/* Hands Detected Visual Indicator */}
+            {status.handsDetected && (
+                <div className="absolute top-16 right-4 z-30 bg-orange-600 text-white px-3 py-2 rounded-full flex items-center space-x-2 animate-pulse">
                     <div className="text-lg font-light">
                         {status.multipleFaces ? "Multiple faces detected" : 
                          status.isTalking ? "Talking detected" : "Please look at the screen"}

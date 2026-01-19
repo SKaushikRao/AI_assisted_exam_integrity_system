@@ -56,7 +56,7 @@ const ControlPanel: React.FC<ControlPanelProps> = ({ score, status, config, setC
             <StatusRow label="Face Detected" active={status.faceDetected} neutral />
             <StatusRow label="Face Consistency" active={!status.multipleFaces} alert={status.multipleFaces} />
             <StatusRow label="Gaze Tracking" active={!status.isLookingAway} alert={status.isLookingAway} />
-            <StatusRow label="Voice Activity" active={!status.isTalking} alert={status.isTalking} />
+            <StatusRow label="Voice Activity" active={status.isTalking && config.voiceActivityDetection} alert={status.isTalking && config.voiceActivityDetection} />
             <StatusRow label="Hands Visible" active={status.handsDetected} neutral />
             <StatusRow label="Hands Clear" active={!status.handNearFace} alert={status.handNearFace} />
         </div>
@@ -93,6 +93,15 @@ const ControlPanel: React.FC<ControlPanelProps> = ({ score, status, config, setC
         <p className="text-[10px] text-zinc-600 -mt-4">
             {config.privacyMode ? "Only storing flagged event frames." : "Metrics only. No images saved."}
         </p>
+
+        {/* Voice Activity Detection */}
+        <div className="flex items-center justify-between">
+            <span className="text-sm text-zinc-400">Voice Activity Detection</span>
+            <Toggle 
+                checked={config.voiceActivityDetection} 
+                onChange={() => setConfig(prev => ({ ...prev, voiceActivityDetection: !prev.voiceActivityDetection }))} 
+            />
+        </div>
 
         {/* Invisible Proctor */}
         <div className="flex items-center justify-between">

@@ -1,6 +1,5 @@
-
-// Replaced Groq with Puter.js (Zero API Key)
-// Using gpt-4o-mini via Puter for Vision capabilities
+// AI Service for Exam Integrity Analysis
+// Using Ollama only for reliable AI vision analysis
 
 export interface AIAnalysisResult {
   status: 'SAFE' | 'SUSPICIOUS' | 'ERROR' | 'INIT';
@@ -8,54 +7,150 @@ export interface AIAnalysisResult {
   model: string;
 }
 
-export async function analyzeFrameWithPuter(base64Image: string): Promise<AIAnalysisResult> {
-  // Wait for Puter to be available if it's still loading
-  if (!window.puter) {
-    console.warn("Puter.js not loaded yet.");
-    return { status: 'ERROR', message: "AI System Loading...", model: "System" };
-  }
+export interface MediaPipeStatus {
+  faceDetected: boolean;
+  handsDetected: boolean;
+  isTalking: boolean;
+  isLookingAway: boolean;
+  multipleFaces: boolean;
+  handNearFace: boolean;
+}
 
+// Main analysis function - Ollama only
+export async function analyzeFrameWithPuter(
+  base64Image: string, 
+  eventType?: string, 
+  isPeriodic: boolean = false,
+  currentStatus?: MediaPipeStatus
+): Promise<AIAnalysisResult> {
+  // Always analyze with Ollama
   try {
-    const response = await window.puter.ai.chat([
-      {
-        role: "user",
-        content: [
-          {
-            type: "text",
-            text: "You are a professional exam invigilator AI. Analyze this webcam frame. Return a raw JSON object (no markdown, no explanations) with exactly two keys:\n1. 'status': 'SAFE' or 'SUSPICIOUS'\n2. 'message': A concise summary of the student's behavior for the exam log.\n\nExample:\n{\"status\": \"SAFE\", \"message\": \"Student is focused on the screen.\"}"
-          },
-          {
-            type: "image_url",
-            image_url: {
-              url: base64Image
-            }
-          }
-        ]
-      }
-    ], { model: 'gpt-4o-mini' });
-
-    // Puter response structure handling
-    const content = response?.message?.content || response?.toString();
-
-    if (!content) return { status: 'ERROR', message: "No analysis received.", model: "gpt-4o-mini" };
-
-    // Robust JSON Parsing
-    try {
-        const cleanContent = content.replace(/```json/g, '').replace(/```/g, '').trim();
-        const parsed = JSON.parse(cleanContent);
-        
-        return {
-            status: (parsed.status === 'SAFE' || parsed.status === 'SUSPICIOUS') ? parsed.status : 'SAFE',
-            message: parsed.message || "Analysis complete.",
-            model: "gpt-4o-mini"
-        };
-    } catch (e) {
-        console.warn("JSON Parse Failed, raw content:", content);
-        return { status: 'SAFE', message: content.substring(0, 100), model: "gpt-4o-mini" };
-    }
-
+    const analysis = await analyzeWithOllama(base64Image, eventType, currentStatus);
+    return analysis;
   } catch (error) {
-    console.error("Puter AI Network Error:", error);
-    return { status: 'ERROR', message: "AI Connection Failed", model: "gpt-4o-mini" };
+    console.error("Ollama analysis failed:", error);
+    return {
+      status: 'ERROR',
+      message: "AI analysis unavailable - Ollama not responding",
+      model: "Ollama (Error)"
+    };
+  }
+}
+
+// Ollama Analysis (Local, Free, Reliable)
+async function analyzeWithOllama(
+  base64Image: string, 
+  eventType: string,
+  currentStatus?: MediaPipeStatus
+): Promise<AIAnalysisResult> {
+  const prompt = createOllamaPrompt(eventType, currentStatus);
+  
+  console.log("Sending request to Ollama:", { model: 'bakllava', promptLength: prompt.length });
+  
+  try {
+    const response = await fetch('http://localhost:11434/api/generate', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'bakllava',
+        prompt: prompt,
+        images: [base64Image],
+        stream: false,
+        options: {
+          temperature: 0.3,
+          max_tokens: 150
+        }
+      })
+    });
+    
+    console.log("Ollama response status:", response.status, response.statusText);
+    
+    if (!response.ok) {
+      throw new Error(`Ollama error: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    const aiResponse = data.response || "No response";
+    
+    console.log("Ollama raw response:", aiResponse);
+    
+    return parseOllamaResponse(aiResponse);
+  } catch (error) {
+    console.error("Ollama fetch error:", error);
+    return {
+      status: 'ERROR',
+      message: "AI analysis unavailable - Ollama not responding",
+      model: "Ollama (Error)"
+    };
+  }
+}
+
+// Create Ollama prompt for vision analysis
+function createOllamaPrompt(
+  eventType: string,
+  currentStatus?: MediaPipeStatus
+): string {
+  const timestamp = new Date().toISOString();
+  
+  return `You are an expert exam integrity proctor. Analyze this image and determine if behavior violates exam rules.
+
+CONTEXT:
+- Event Type: ${eventType}
+- Timestamp: ${timestamp}
+- Face Detected: ${currentStatus?.faceDetected || 'unknown'}
+- Multiple Faces: ${currentStatus?.multipleFaces || 'unknown'}
+- Hands Detected: ${currentStatus?.handsDetected || 'unknown'}
+- Hand Near Face: ${currentStatus?.handNearFace || 'unknown'}
+- Looking Away: ${currentStatus?.isLookingAway || 'unknown'}
+- Talking: ${currentStatus?.isTalking || 'unknown'}
+
+ANALYSIS TASK:
+1. Examine the image for exam integrity violations
+2. Look specifically for: multiple people, unauthorized materials, cheating attempts, distractions
+3. Consider the context of an exam environment
+4. Provide clear, concise assessment
+
+RESPONSE FORMAT:
+Status: [SAFE|SUSPICIOUS]
+Message: [Your analysis in 1-2 sentences]
+
+Examples:
+Status: SUSPICIOUS
+Message: Multiple people visible in frame - potential collaboration
+
+Status: SAFE  
+Message: Student focused on exam - no violations detected
+
+Status: SUSPICIOUS
+Message: Hand near face detected - potential unauthorized assistance
+
+Status: SAFE
+Message: Student maintaining proper exam conduct - no issues detected`;
+}
+
+// Parse Ollama response
+function parseOllamaResponse(response: string): AIAnalysisResult {
+  try {
+    // Extract status and message from Ollama response
+    const statusMatch = response.match(/Status:\s*(SAFE|SUSPICIOUS)/i);
+    const messageMatch = response.match(/Message:\s*(.+)/i);
+    
+    const status = statusMatch ? statusMatch[1].toUpperCase() : 'SAFE';
+    const message = messageMatch ? messageMatch[1].trim() : response.trim();
+    
+    return {
+      status: status as 'SAFE' | 'SUSPICIOUS',
+      message: message || "Analysis completed",
+      model: "Ollama (bakllava)"
+    };
+  } catch (error) {
+    console.error("Failed to parse Ollama response:", error);
+    return {
+      status: 'SAFE',
+      message: response || "Analysis completed",
+      model: "Ollama (bakllava)"
+    };
   }
 }

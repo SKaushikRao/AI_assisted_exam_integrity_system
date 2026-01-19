@@ -34,17 +34,37 @@ const Timeline: React.FC<TimelineProps> = ({ events, onEventClick }) => {
             />
             
             {/* Tooltip on Hover */}
-            <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 hidden group-hover:block z-50 w-64">
-                <div className="bg-zinc-900 border border-white/20 p-3 shadow-xl">
+            <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 hidden group-hover:block z-[9999] w-80 max-h-80 overflow-auto">
+                <div className="bg-zinc-900 border border-white/20 p-3 shadow-xl rounded-lg">
                     <div className="flex justify-between items-center mb-2">
-                        <span className="text-red-500 font-bold text-xs">{evt.type}</span>
+                        <span className="text-red-500 font-bold text-xs flex items-center">
+                            {evt.type}
+                            {/* Multiple People Indicator */}
+                            {evt.type === 'MULTIPLE_FACES' && (
+                                <span className="ml-2 bg-red-600 text-white text-[8px] px-1 rounded">
+                                    👥 MULTIPLE
+                                </span>
+                            )}
+                        </span>
                         <span className="text-zinc-500 text-[10px]">{new Date(evt.timestamp).toLocaleTimeString()}</span>
                     </div>
                     <p className="text-xs text-white mb-2 leading-relaxed">
                         {evt.description}
                     </p>
                     {evt.screenshotUrl && (
-                        <img src={evt.screenshotUrl} alt="Proof" className="w-full h-auto border border-zinc-700 opacity-80" />
+                        <div className="relative max-h-48 overflow-hidden rounded">
+                            <img 
+                                src={evt.screenshotUrl} 
+                                alt="Proof" 
+                                className="w-full h-auto object-contain rounded" 
+                            />
+                            {/* Multiple People Overlay */}
+                            {evt.type === 'MULTIPLE_FACES' && (
+                                <div className="absolute top-2 right-2 bg-red-600 text-white text-xs px-2 py-1 rounded-full flex items-center">
+                                    👥 Multiple Faces
+                                </div>
+                            )}
+                        </div>
                     )}
                 </div>
                 {/* Arrow */}
