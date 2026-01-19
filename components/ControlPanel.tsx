@@ -94,6 +94,15 @@ const ControlPanel: React.FC<ControlPanelProps> = ({ score, status, config, setC
             {config.privacyMode ? "Only storing flagged event frames." : "Metrics only. No images saved."}
         </p>
 
+        {/* Voice Activity Detection */}
+        <div className="flex items-center justify-between">
+            <span className="text-sm text-zinc-400">Voice Activity Detection</span>
+            <Toggle 
+                checked={config.voiceActivityDetection} 
+                onChange={() => setConfig(prev => ({ ...prev, voiceActivityDetection: !prev.voiceActivityDetection }))} 
+            />
+        </div>
+
         {/* Invisible Proctor */}
         <div className="flex items-center justify-between">
             <span className="text-sm">Invisible Proctor</span>
@@ -116,6 +125,7 @@ const ControlPanel: React.FC<ControlPanelProps> = ({ score, status, config, setC
     </div>
   );
 };
+//pitch_!
 
 const StatusRow = ({ label, active, alert, neutral }: { label: string, active: boolean, alert?: boolean, neutral?: boolean }) => (
     <div className="flex justify-between items-center">

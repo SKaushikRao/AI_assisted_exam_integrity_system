@@ -4,6 +4,7 @@ import ControlPanel from './components/ControlPanel';
 import { IntegrityEvent, AppConfig, DetectionStatus } from './types';
 import { calculateHeadPose, calculateMouthOpenness, calculateHandFaceDistance } from './services/geometryUtils';
 import { analyzeFrameWithPuter, AIAnalysisResult } from './services/groqService';
+import { drawEnhancedHandMesh, analyzeHandActivity, HandAnalysis } from './services/handMeshUtils';
 
 // --- Constants ---
 const MAX_SCORE = 100;
@@ -16,7 +17,8 @@ const INITIAL_CONFIG: AppConfig = {
   privacyMode: true,
   invisibleProctor: false,
   examMode: 'MCQ',
-  demoMode: false, // Disable demo mode to test real detection
+  demoMode: false,
+  voiceActivityDetection: true, // Enable voice activity detection by default
 };
 
 const INITIAL_STATUS: DetectionStatus = {
@@ -41,7 +43,7 @@ const App: React.FC = () => {
   const [cameraPermission, setCameraPermission] = useState(false);
 
   // AI State
-  const [aiResult, setAiResult] = useState<AIAnalysisResult>({ status: 'INIT', message: "Dual AI System - Event + 5-sec periodic analysis", model: "Rule-Based" });
+  const [aiResult, setAiResult] = useState<AIAnalysisResult>({ status: 'INIT', message: "MediaPipe AI Ready - Local detection only", model: "MediaPipe (Enhanced)" });
   const [isAiAnalyzing, setIsAiAnalyzing] = useState(false);
 
   // Logic Timers
@@ -57,6 +59,7 @@ const App: React.FC = () => {
   
   const latestFaceResults = useRef<any>(null);
   const latestHandResults = useRef<any>(null);
+  const previousHandLandmarks = useRef<any[][]>([]);
 
   // --- Helper: Capture Screenshot (High Res for Logs) ---
   const captureScreenshot = useCallback((): string | undefined => {
@@ -138,6 +141,13 @@ const App: React.FC = () => {
     // Debug: Log detection status
     console.log("Processing frame - Face detected:", !!faceResults?.multiFaceLandmarks?.length, "Hands detected:", !!handResults?.multiHandLandmarks?.length);
 
+    // TEST: Draw simple orange box to verify canvas is working
+    ctx.fillStyle = '#ff880050';
+    ctx.fillRect(10, 10, 80, 30);
+    ctx.fillStyle = '#ff8800';
+    ctx.font = 'bold 16px Inter';
+    ctx.fillText('HAND DETECTION TEST', 15, 30);
+
     let currentStatus = { ...INITIAL_STATUS };
     let deduction = 0;
 
@@ -194,7 +204,7 @@ const App: React.FC = () => {
 
       // Talking
       const mouthOpen = calculateMouthOpenness(landmarks);
-      if (mouthOpen > TALK_THRESHOLD) {
+      if (mouthOpen > TALK_THRESHOLD && config.voiceActivityDetection) {
          currentStatus.isTalking = true;
          if (!talkingStartTime.current) talkingStartTime.current = Date.now();
          else if (Date.now() - talkingStartTime.current > 1500) {
@@ -220,25 +230,107 @@ const App: React.FC = () => {
       }
     }
 
-    // --- Hand Logic ---
+    // --- Enhanced Hand Logic ---
+    // Debug: Check if hand results exist
+    if (handResults) {
+        console.log("Hand results received:", handResults);
+        console.log("MultiHandLandmarks:", handResults.multiHandLandmarks);
+        console.log("MultiHandedness:", handResults.multiHandedness);
+    }
+    
     if (handResults && handResults.multiHandLandmarks && handResults.multiHandLandmarks.length > 0) {
         currentStatus.handsDetected = true;
-        for (const landmarks of handResults.multiHandLandmarks) {
-            const connections = window.HAND_CONNECTIONS || (window.Hands ? (window.Hands as any).HAND_CONNECTIONS : undefined);
+        console.log("Processing", handResults.multiHandLandmarks.length, "hands");
+        
+        for (let handIndex = 0; handIndex < handResults.multiHandLandmarks.length; handIndex++) {
+            const landmarks = handResults.multiHandLandmarks[handIndex];
+            const handedness = handResults.multiHandedness?.[handIndex];
+            const isRightHand = handedness?.label === 'Right';
             
-            if (window.drawConnectors && connections) {
-                window.drawConnectors(ctx, landmarks, connections, { color: '#ff0000', lineWidth: 2 });
+            console.log(`Hand ${handIndex} landmarks:`, landmarks?.length || 0);
+            
+            if (!landmarks || landmarks.length < 21) {
+                console.warn("Invalid landmarks for hand", handIndex);
+                continue;
             }
-            if (window.drawLandmarks) {
-                window.drawLandmarks(ctx, landmarks, { color: '#ffff00', lineWidth: 2, radius: 3 });
-            }
-
-            if (currentStatus.faceDetected && faceResults && faceResults.multiFaceLandmarks && faceResults.multiFaceLandmarks[0]) {
-                const dist = calculateHandFaceDistance(landmarks, faceResults.multiFaceLandmarks[0]);
-                if (dist < 0.3) { 
-                    currentStatus.handNearFace = true;
+            
+            // Analyze hand activity with enhanced detection
+            const faceLandmarks = faceResults?.multiFaceLandmarks?.[0] || null;
+            const previousLandmarks = previousHandLandmarks.current[handIndex] || null;
+            const handAnalysis: HandAnalysis = analyzeHandActivity(landmarks, previousLandmarks, faceLandmarks);
+            
+            // Enhanced hand mesh drawing with signature orange color
+            let meshColor = '#ff8800'; // Signature orange
+            let lineWidth = 3;
+            
+            if (handAnalysis.suspiciousActivity) {
+                meshColor = '#ff4444'; // Red for suspicious
+                lineWidth = 4;
+                deduction += 0.3;
+                
+                if (Date.now() - lastEventTime.current > 3000) {
+                    if (handAnalysis.isNearFace) {
+                        logEvent('HAND_NEAR_FACE', 'HIGH', `Hand near face detected: ${handAnalysis.gesture.description}`);
+                    } else if (handAnalysis.movementSpeed > 0.1) {
+                        logEvent('SUSPICIOUS_HAND_MOVEMENT', 'MEDIUM', `Rapid hand movement: ${handAnalysis.gesture.description}`);
+                    } else {
+                        logEvent('SUSPICIOUS_HAND_ACTIVITY', 'MEDIUM', `Suspicious hand activity: ${handAnalysis.gesture.description}`);
+                    }
                 }
             }
+            
+            // Draw enhanced hand mesh
+            try {
+                drawEnhancedHandMesh(ctx, landmarks, {
+                    color: meshColor,
+                    lineWidth: lineWidth,
+                    pointRadius: 4,
+                    showConnections: true,
+                    showLandmarks: true,
+                    fillMesh: false
+                });
+                
+                // Draw gesture label
+                if (handAnalysis.gesture.confidence > 0.5) {
+                    const wrist = landmarks[0];
+                    ctx.fillStyle = meshColor;
+                    ctx.font = 'bold 14px Inter';
+                    ctx.strokeStyle = '#000000';
+                    ctx.lineWidth = 3;
+                    ctx.strokeText(
+                        `${isRightHand ? 'R' : 'L'}: ${handAnalysis.gesture.type}`,
+                        wrist.x * ctx.canvas.width + 10,
+                        wrist.y * ctx.canvas.height - 10
+                    );
+                    ctx.fillText(
+                        `${isRightHand ? 'R' : 'L'}: ${handAnalysis.gesture.type}`,
+                        wrist.x * ctx.canvas.width + 10,
+                        wrist.y * ctx.canvas.height - 10
+                    );
+                }
+                
+                console.log(`Successfully drew hand mesh for hand ${handIndex}`);
+            } catch (drawError) {
+                console.error("Error drawing hand mesh:", drawError);
+            }
+            
+            // Update hand near face detection
+            if (handAnalysis.isNearFace) {
+                currentStatus.handNearFace = true;
+            }
+            
+            // Store current landmarks for next frame
+            previousHandLandmarks.current[handIndex] = landmarks;
+        }
+    } else {
+        // Fallback: Draw simple hand indicator if MediaPipe fails
+        if (latestHandResults.current === null && Date.now() % 5000 < 100) {
+            console.log("Drawing fallback hand indicator");
+            ctx.fillStyle = '#ff880080';
+            ctx.fillRect(50, 50, 100, 20);
+            ctx.fillStyle = '#ff8800';
+            ctx.font = 'bold 16px Inter';
+            ctx.fillText('HAND DETECTION ACTIVE', 60, 65);
         }
     }
 
@@ -262,80 +354,12 @@ const App: React.FC = () => {
     processFrameRef.current = processFrame;
   }, [processFrame]);
 
-  // --- AI Integration (Event-Triggered + Periodic) ---
-  const triggerAIAnalysis = useCallback(async (eventType: string, frameData?: string) => {
-    if (config.demoMode || !cameraPermission) return;
-    
-    const frame = frameData || captureLowResFrame();
-    if (!frame) return;
-
-    console.log("Triggering event-based AI analysis:", eventType);
-    setIsAiAnalyzing(true);
-    
-    try {
-      const result = await analyzeFrameWithPuter(frame, eventType, false);
-      setAiResult(result);
-      
-      // If AI confirms suspicious activity, apply heavy penalty
-      if (result.status === 'SUSPICIOUS') {
-        logEvent('LOOKING_AWAY', 'HIGH', `AI Verified: ${result.message}`);
-        setScore(s => Math.max(0, s - 10)); // Heavy penalty for AI-confirmed cheating
-      }
-    } catch (error) {
-      console.error("AI analysis failed:", error);
-    } finally {
-      setIsAiAnalyzing(false);
-    }
-  }, [config.demoMode, cameraPermission, captureLowResFrame, logEvent]);
-
-  // --- High-Severity Event Detection ---
-  const previousStatusRef = useRef<DetectionStatus>(INITIAL_STATUS);
-  
+  // --- AI Integration Loop (DISABLED - MediaPipe Only) ---
   useEffect(() => {
-    const prevStatus = previousStatusRef.current;
-    
-    // Check for high-severity events that need AI verification
-    if (status.multipleFaces && !prevStatus.multipleFaces) {
-      triggerAIAnalysis("MULTIPLE_FACES_DETECTED");
-    }
-    
-    if (status.faceDetected && !prevStatus.faceDetected && missingFaceStartTime.current && 
-        Date.now() - missingFaceStartTime.current > 5000) {
-      triggerAIAnalysis("FACE_MISSING_LONG_DURATION");
-    }
-    
-    previousStatusRef.current = status;
-  }, [status, triggerAIAnalysis]);
-
-  // --- Periodic AI Analysis (Every 5 seconds) ---
-  useEffect(() => {
-    if (config.demoMode || !cameraPermission) return;
-
-    const periodicInterval = setInterval(async () => {
-      const frame = captureLowResFrame();
-      if (frame) {
-        console.log("Running periodic AI analysis (5-second interval)");
-        setIsAiAnalyzing(true);
-        
-        try {
-          const result = await analyzeFrameWithPuter(frame, undefined, true); // isPeriodic = true
-          setAiResult(result);
-          
-          // Apply lighter penalty for periodic detection
-          if (result.status === 'SUSPICIOUS') {
-            logEvent('PERIODIC_ALERT', 'MEDIUM', `Periodic AI: ${result.message}`);
-            setScore(s => Math.max(0, s - 2)); // Lighter penalty for periodic detection
-          }
-        } catch (error) {
-          console.error("Periodic AI analysis failed:", error);
-        } finally {
-          setIsAiAnalyzing(false);
-        }
-      }
-    }, 5000); // Every 5 seconds
-
-    return () => clearInterval(periodicInterval);
-  }, [cameraPermission, config.demoMode, captureLowResFrame, logEvent]);
+    // DISABLED: Using MediaPipe-only detection to prevent external AI interference
+    console.log("AI analysis disabled - Using MediaPipe detection only");
+    return () => {};
+  }, []);
 
   // --- Initialization Effect ---
   useEffect(() => {
@@ -364,9 +388,9 @@ const App: React.FC = () => {
       });
       faceMesh.setOptions({
         maxNumFaces: 2,
-        refineLandmarks: true,
         minDetectionConfidence: 0.5,
         minTrackingConfidence: 0.5,
+        staticImageMode: false,
       });
 
       faceMesh.onResults((results: any) => {
@@ -377,13 +401,35 @@ const App: React.FC = () => {
       const hands = new window.Hands({
         locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`,
       });
-      hands.setOptions({
-        maxNumHands: 2,
-        minDetectionConfidence: 0.5,
-        minTrackingConfidence: 0.5,
-      });
+      
+      // Use the most stable configuration to avoid WASM memory errors
+      try {
+        hands.setOptions({
+          maxNumHands: 1, // Start with 1 hand to reduce memory usage
+          minDetectionConfidence: 0.7, // Higher confidence to reduce false positives
+          minTrackingConfidence: 0.7, // Higher tracking confidence
+          modelComplexity: 0, // Use simplest model
+        });
+        console.log("Hands model configured with stable settings");
+      } catch (error) {
+        console.error("Failed to configure Hands model:", error);
+        // Try with minimal options
+        try {
+          hands.setOptions({
+            maxNumHands: 1,
+            minDetectionConfidence: 0.8,
+            minTrackingConfidence: 0.8,
+          });
+          console.log("Hands model configured with minimal settings");
+        } catch (fallbackError) {
+          console.error("Failed to configure Hands model even with fallback:", fallbackError);
+        }
+      }
 
       hands.onResults((results: any) => {
+        if (results && results.multiHandLandmarks) {
+          console.log("Hand detected:", results.multiHandLandmarks.length, "hands");
+        }
         latestHandResults.current = results;
         processFrameRef.current();
       });
