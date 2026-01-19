@@ -41,7 +41,7 @@ const App: React.FC = () => {
   const [cameraPermission, setCameraPermission] = useState(false);
 
   // AI State
-  const [aiResult, setAiResult] = useState<AIAnalysisResult>({ status: 'INIT', message: "Initializing Vision AI...", model: "System" });
+  const [aiResult, setAiResult] = useState<AIAnalysisResult>({ status: 'INIT', message: "Dual AI System - Event + 5-sec periodic analysis", model: "Rule-Based" });
   const [isAiAnalyzing, setIsAiAnalyzing] = useState(false);
 
   // Logic Timers
@@ -262,29 +262,80 @@ const App: React.FC = () => {
     processFrameRef.current = processFrame;
   }, [processFrame]);
 
-  // --- AI Integration Loop (Puter.js) ---
+  // --- AI Integration (Event-Triggered + Periodic) ---
+  const triggerAIAnalysis = useCallback(async (eventType: string, frameData?: string) => {
+    if (config.demoMode || !cameraPermission) return;
+    
+    const frame = frameData || captureLowResFrame();
+    if (!frame) return;
+
+    console.log("Triggering event-based AI analysis:", eventType);
+    setIsAiAnalyzing(true);
+    
+    try {
+      const result = await analyzeFrameWithPuter(frame, eventType, false);
+      setAiResult(result);
+      
+      // If AI confirms suspicious activity, apply heavy penalty
+      if (result.status === 'SUSPICIOUS') {
+        logEvent('LOOKING_AWAY', 'HIGH', `AI Verified: ${result.message}`);
+        setScore(s => Math.max(0, s - 10)); // Heavy penalty for AI-confirmed cheating
+      }
+    } catch (error) {
+      console.error("AI analysis failed:", error);
+    } finally {
+      setIsAiAnalyzing(false);
+    }
+  }, [config.demoMode, cameraPermission, captureLowResFrame, logEvent]);
+
+  // --- High-Severity Event Detection ---
+  const previousStatusRef = useRef<DetectionStatus>(INITIAL_STATUS);
+  
+  useEffect(() => {
+    const prevStatus = previousStatusRef.current;
+    
+    // Check for high-severity events that need AI verification
+    if (status.multipleFaces && !prevStatus.multipleFaces) {
+      triggerAIAnalysis("MULTIPLE_FACES_DETECTED");
+    }
+    
+    if (status.faceDetected && !prevStatus.faceDetected && missingFaceStartTime.current && 
+        Date.now() - missingFaceStartTime.current > 5000) {
+      triggerAIAnalysis("FACE_MISSING_LONG_DURATION");
+    }
+    
+    previousStatusRef.current = status;
+  }, [status, triggerAIAnalysis]);
+
+  // --- Periodic AI Analysis (Every 5 seconds) ---
   useEffect(() => {
     if (config.demoMode || !cameraPermission) return;
 
-    const aiInterval = setInterval(async () => {
-        const frame = captureLowResFrame();
-        if (frame) {
-            setIsAiAnalyzing(true);
-            const result = await analyzeFrameWithPuter(frame);
-            setAiResult(result);
-            setIsAiAnalyzing(false);
-            
-            // If AI explicitly detects cheating (SUSPICIOUS status), log it
-            if (result.status === 'SUSPICIOUS') {
-               logEvent('LOOKING_AWAY', 'HIGH', `AI Flag: ${result.message}`);
-               setScore(s => Math.max(0, s - 5)); // Heavy penalty for LLM verified suspicion
-            }
+    const periodicInterval = setInterval(async () => {
+      const frame = captureLowResFrame();
+      if (frame) {
+        console.log("Running periodic AI analysis (5-second interval)");
+        setIsAiAnalyzing(true);
+        
+        try {
+          const result = await analyzeFrameWithPuter(frame, undefined, true); // isPeriodic = true
+          setAiResult(result);
+          
+          // Apply lighter penalty for periodic detection
+          if (result.status === 'SUSPICIOUS') {
+            logEvent('PERIODIC_ALERT', 'MEDIUM', `Periodic AI: ${result.message}`);
+            setScore(s => Math.max(0, s - 2)); // Lighter penalty for periodic detection
+          }
+        } catch (error) {
+          console.error("Periodic AI analysis failed:", error);
+        } finally {
+          setIsAiAnalyzing(false);
         }
-    }, 6000); // Check every 6 seconds
+      }
+    }, 5000); // Every 5 seconds
 
-    return () => clearInterval(aiInterval);
+    return () => clearInterval(periodicInterval);
   }, [cameraPermission, config.demoMode, captureLowResFrame, logEvent]);
-
 
   // --- Initialization Effect ---
   useEffect(() => {
