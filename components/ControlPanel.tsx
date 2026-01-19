@@ -116,6 +116,7 @@ const ControlPanel: React.FC<ControlPanelProps> = ({ score, status, config, setC
     </div>
   );
 };
+//pitch_!
 
 const StatusRow = ({ label, active, alert, neutral }: { label: string, active: boolean, alert?: boolean, neutral?: boolean }) => (
     <div className="flex justify-between items-center">
