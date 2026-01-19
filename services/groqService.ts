@@ -1,6 +1,5 @@
-
 // AI Service for Exam Integrity Analysis
-// Using real-time MediaPipe data for analysis
+// Using Ollama only for reliable AI vision analysis
 
 export interface AIAnalysisResult {
   status: 'SAFE' | 'SUSPICIOUS' | 'ERROR' | 'INIT';
@@ -17,143 +16,141 @@ export interface MediaPipeStatus {
   handNearFace: boolean;
 }
 
-// Main analysis function - can be triggered by events or periodic checks
+// Main analysis function - Ollama only
 export async function analyzeFrameWithPuter(
   base64Image: string, 
   eventType?: string, 
   isPeriodic: boolean = false,
   currentStatus?: MediaPipeStatus
 ): Promise<AIAnalysisResult> {
-  // For periodic checks, always analyze with real-time data
-  if (!isPeriodic && !eventType) {
+  // Always analyze with Ollama
+  try {
+    const analysis = await analyzeWithOllama(base64Image, eventType, currentStatus);
+    return analysis;
+  } catch (error) {
+    console.error("Ollama analysis failed:", error);
     return {
-      status: 'SAFE',
-      message: "MediaPipe monitoring active - no AI analysis needed",
-      model: "MediaPipe Only"
+      status: 'ERROR',
+      message: "AI analysis unavailable - Ollama not responding",
+      model: "Ollama (Error)"
     };
   }
-
-  if (isPeriodic) {
-    return await analyzePeriodic(base64Image, currentStatus);
-  } else {
-    return await analyzeEvent(base64Image, eventType);
-  }
 }
 
-// Event-triggered analysis (high-severity events)
-async function analyzeEvent(base64Image: string, eventType: string): Promise<AIAnalysisResult> {
-  console.log("Event-triggered analysis for:", eventType);
+// Ollama Analysis (Local, Free, Reliable)
+async function analyzeWithOllama(
+  base64Image: string, 
+  eventType: string,
+  currentStatus?: MediaPipeStatus
+): Promise<AIAnalysisResult> {
+  const prompt = createOllamaPrompt(eventType, currentStatus);
   
-  const suspiciousEvents = [
-    'MULTIPLE_FACES_DETECTED',
-    'FACE_MISSING_LONG_DURATION',
-    'HAND_NEAR_FACE'
-  ];
+  console.log("Sending request to Ollama:", { model: 'bakllava', promptLength: prompt.length });
   
-  const isSuspicious = suspiciousEvents.includes(eventType);
-  
-  const descriptions = {
-    'MULTIPLE_FACES_DETECTED': 'Multiple people detected in camera view - potential collaboration',
-    'FACE_MISSING_LONG_DURATION': 'Student not visible for extended period - potential cheating',
-    'HAND_NEAR_FACE': 'Hand proximity to face detected - potential unauthorized assistance'
-  };
-  
-  return {
-    status: isSuspicious ? 'SUSPICIOUS' : 'SAFE',
-    message: descriptions[eventType] || `Event analysis: ${eventType}`,
-    model: "Rule-Based"
-  };
-}
-
-// Periodic analysis (every 5 seconds - real-time comprehensive detection)
-async function analyzePeriodic(base64Image: string, currentStatus?: MediaPipeStatus): Promise<AIAnalysisResult> {
-  console.log("Running real-time analysis with MediaPipe data:", currentStatus);
-  
-  if (!currentStatus) {
-    return {
-      status: 'SAFE',
-      message: "MediaPipe status unavailable - monitoring active",
-      model: "Rule-Based"
-    };
-  }
-
-  // Generate real-time analysis based on actual MediaPipe detection
-  const analysis = generateRealTimeAnalysis(currentStatus);
-  
-  return {
-    status: analysis.status,
-    message: analysis.message,
-    model: "Rule-Based"
-  };
-}
-
-// Generate real-time analysis based on actual MediaPipe data
-function generateRealTimeAnalysis(status: MediaPipeStatus): { status: 'SAFE' | 'SUSPICIOUS'; message: string } {
-  const issues = [];
-  
-  // Check each detection category
-  if (!status.faceDetected) {
-    issues.push("face not visible");
-  }
-  
-  if (status.multipleFaces) {
-    issues.push("multiple faces detected");
-  }
-  
-  if (status.isLookingAway) {
-    issues.push("looking away from screen");
-  }
-  
-  if (status.isTalking) {
-    issues.push("mouth movement detected");
-  }
-  
-  if (status.handsDetected) {
-    if (status.handNearFace) {
-      issues.push("hand near face");
-    } else {
-      issues.push("hands visible");
+  try {
+    const response = await fetch('http://localhost:11434/api/generate', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'bakllava',
+        prompt: prompt,
+        images: [base64Image],
+        stream: false,
+        options: {
+          temperature: 0.3,
+          max_tokens: 150
+        }
+      })
+    });
+    
+    console.log("Ollama response status:", response.status, response.statusText);
+    
+    if (!response.ok) {
+      throw new Error(`Ollama error: ${response.status}`);
     }
+    
+    const data = await response.json();
+    const aiResponse = data.response || "No response";
+    
+    console.log("Ollama raw response:", aiResponse);
+    
+    return parseOllamaResponse(aiResponse);
+  } catch (error) {
+    console.error("Ollama fetch error:", error);
+    return {
+      status: 'ERROR',
+      message: "AI analysis unavailable - Ollama not responding",
+      model: "Ollama (Error)"
+    };
   }
+}
+
+// Create Ollama prompt for vision analysis
+function createOllamaPrompt(
+  eventType: string,
+  currentStatus?: MediaPipeStatus
+): string {
+  const timestamp = new Date().toISOString();
   
-  // Generate message based on detected issues
-  if (issues.length === 0) {
+  return `You are an expert exam integrity proctor. Analyze this image and determine if behavior violates exam rules.
+
+CONTEXT:
+- Event Type: ${eventType}
+- Timestamp: ${timestamp}
+- Face Detected: ${currentStatus?.faceDetected || 'unknown'}
+- Multiple Faces: ${currentStatus?.multipleFaces || 'unknown'}
+- Hands Detected: ${currentStatus?.handsDetected || 'unknown'}
+- Hand Near Face: ${currentStatus?.handNearFace || 'unknown'}
+- Looking Away: ${currentStatus?.isLookingAway || 'unknown'}
+- Talking: ${currentStatus?.isTalking || 'unknown'}
+
+ANALYSIS TASK:
+1. Examine the image for exam integrity violations
+2. Look specifically for: multiple people, unauthorized materials, cheating attempts, distractions
+3. Consider the context of an exam environment
+4. Provide clear, concise assessment
+
+RESPONSE FORMAT:
+Status: [SAFE|SUSPICIOUS]
+Message: [Your analysis in 1-2 sentences]
+
+Examples:
+Status: SUSPICIOUS
+Message: Multiple people visible in frame - potential collaboration
+
+Status: SAFE  
+Message: Student focused on exam - no violations detected
+
+Status: SUSPICIOUS
+Message: Hand near face detected - potential unauthorized assistance
+
+Status: SAFE
+Message: Student maintaining proper exam conduct - no issues detected`;
+}
+
+// Parse Ollama response
+function parseOllamaResponse(response: string): AIAnalysisResult {
+  try {
+    // Extract status and message from Ollama response
+    const statusMatch = response.match(/Status:\s*(SAFE|SUSPICIOUS)/i);
+    const messageMatch = response.match(/Message:\s*(.+)/i);
+    
+    const status = statusMatch ? statusMatch[1].toUpperCase() : 'SAFE';
+    const message = messageMatch ? messageMatch[1].trim() : response.trim();
+    
+    return {
+      status: status as 'SAFE' | 'SUSPICIOUS',
+      message: message || "Analysis completed",
+      model: "Ollama (bakllava)"
+    };
+  } catch (error) {
+    console.error("Failed to parse Ollama response:", error);
     return {
       status: 'SAFE',
-      message: "Student focused on exam - proper posture and attention maintained"
+      message: response || "Analysis completed",
+      model: "Ollama (bakllava)"
     };
   }
-  
-  // Prioritize suspicious activities
-  const highPriorityIssues = issues.filter(issue => 
-    issue.includes("multiple faces") || 
-    issue.includes("face not visible") || 
-    issue.includes("hand near face")
-  );
-  
-  if (highPriorityIssues.length > 0) {
-    return {
-      status: 'SUSPICIOUS',
-      message: `Suspicious activity detected: ${highPriorityIssues.join(", ")} - potential exam violation`
-    };
-  }
-  
-  // Medium priority issues
-  const mediumPriorityIssues = issues.filter(issue => 
-    issue.includes("looking away") || 
-    issue.includes("mouth movement")
-  );
-  
-  if (mediumPriorityIssues.length > 0) {
-    return {
-      status: 'SUSPICIOUS',
-      message: `Concerning behavior: ${mediumPriorityIssues.join(", ")} - please maintain exam focus`
-    };
-  }
-  
-  // Low priority (just hands visible)
-  return {
-    status: 'SAFE',
-    message: `Monitoring: ${issues.join(", ")} - continuing observation`
-  };
 }

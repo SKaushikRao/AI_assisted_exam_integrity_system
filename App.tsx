@@ -41,7 +41,7 @@ const App: React.FC = () => {
   const [cameraPermission, setCameraPermission] = useState(false);
 
   // AI State
-  const [aiResult, setAiResult] = useState<AIAnalysisResult>({ status: 'INIT', message: "Dual AI System - Event + 5-sec periodic analysis", model: "Rule-Based" });
+  const [aiResult, setAiResult] = useState<AIAnalysisResult>({ status: 'INIT', message: "Ollama AI Ready - Local vision analysis", model: "Ollama (bakllava)" });
   const [isAiAnalyzing, setIsAiAnalyzing] = useState(false);
 
   // Logic Timers
@@ -221,22 +221,48 @@ const App: React.FC = () => {
     }
 
     // --- Hand Logic ---
+    // Simple hand detection without complex model loading
     if (handResults && handResults.multiHandLandmarks && handResults.multiHandLandmarks.length > 0) {
         currentStatus.handsDetected = true;
+        
         for (const landmarks of handResults.multiHandLandmarks) {
-            const connections = window.HAND_CONNECTIONS || (window.Hands ? (window.Hands as any).HAND_CONNECTIONS : undefined);
-            
-            if (window.drawConnectors && connections) {
-                window.drawConnectors(ctx, landmarks, connections, { color: '#ff0000', lineWidth: 2 });
-            }
+            // Simple hand visualization - just draw landmarks
             if (window.drawLandmarks) {
-                window.drawLandmarks(ctx, landmarks, { color: '#ffff00', lineWidth: 2, radius: 3 });
+                window.drawLandmarks(ctx, landmarks, { 
+                    color: '#ff6b35', // Orange color for hands
+                    lineWidth: 2, 
+                    radius: 3 
+                });
+            }
+            
+            // Draw hand connections if available
+            const connections = window.HAND_CONNECTIONS || (window.Hands ? (window.Hands as any).HAND_CONNECTIONS : undefined);
+            if (window.drawConnectors && connections) {
+                window.drawConnectors(ctx, landmarks, connections, { 
+                    color: '#ff6b35', // Orange skeleton
+                    lineWidth: 2 
+                });
             }
 
+            // Check hand near face
             if (currentStatus.faceDetected && faceResults && faceResults.multiFaceLandmarks && faceResults.multiFaceLandmarks[0]) {
                 const dist = calculateHandFaceDistance(landmarks, faceResults.multiFaceLandmarks[0]);
                 if (dist < 0.3) { 
                     currentStatus.handNearFace = true;
+                    
+                    // Draw warning line between hand and face
+                    ctx.strokeStyle = '#ff0000';
+                    ctx.lineWidth = 2;
+                    ctx.setLineDash([5, 5]);
+                    ctx.beginPath();
+                    const handCenter = landmarks[9]; // Middle finger MCP joint
+                    const faceCenter = faceResults.multiFaceLandmarks[0][1]; // Nose tip
+                    if (handCenter && faceCenter) {
+                        ctx.moveTo(handCenter.x * width, handCenter.y * height);
+                        ctx.lineTo(faceCenter.x * width, faceCenter.y * height);
+                        ctx.stroke();
+                    }
+                    ctx.setLineDash([]);
                 }
             }
         }
@@ -318,7 +344,7 @@ const App: React.FC = () => {
         setIsAiAnalyzing(true);
         
         try {
-          const result = await analyzeFrameWithPuter(frame, undefined, true, status); // Pass real-time status
+          const result = await analyzeFrameWithPuter(frame, undefined, true, status); // Pass real-time status only
           setAiResult(result);
           
           // Apply lighter penalty for periodic detection
@@ -379,8 +405,9 @@ const App: React.FC = () => {
       });
       hands.setOptions({
         maxNumHands: 2,
-        minDetectionConfidence: 0.5,
-        minTrackingConfidence: 0.5,
+        modelComplexity: 1, // Use simpler model
+        minDetectionConfidence: 0.7, // Higher confidence threshold
+        minTrackingConfidence: 0.7,
       });
 
       hands.onResults((results: any) => {
@@ -523,8 +550,32 @@ const App: React.FC = () => {
                 <div className="absolute w-64 h-64 border border-white/30 rounded-full animate-pulse z-0 pointer-events-none" />
             )}
 
+            {/* Multiple Faces Visual Indicator */}
+            {status.multipleFaces && (
+                <div className="absolute top-4 right-4 z-30 bg-red-600 text-white px-3 py-2 rounded-full flex items-center space-x-2 animate-pulse">
+                    <span className="text-lg">👥</span>
+                    <span className="text-sm font-bold">MULTIPLE FACES</span>
+                </div>
+            )}
+
+            {/* Hands Detected Visual Indicator */}
+            {status.handsDetected && (
+                <div className="absolute top-16 right-4 z-30 bg-orange-600 text-white px-3 py-2 rounded-full flex items-center space-x-2 animate-pulse">
+                    <span className="text-lg">🙌</span>
+                    <span className="text-sm font-bold">HANDS DETECTED</span>
+                </div>
+            )}
+
+            {/* Hand Near Face Warning */}
+            {status.handNearFace && (
+                <div className="absolute top-28 right-4 z-30 bg-yellow-600 text-white px-3 py-2 rounded-full flex items-center space-x-2 animate-pulse">
+                    <span className="text-lg">⚠️</span>
+                    <span className="text-sm font-bold">HAND NEAR FACE</span>
+                </div>
+            )}
+
             {/* Invisible Proctor Warning Toast */}
-            {!config.invisibleProctor && (status.isLookingAway || status.isTalking || status.multipleFaces) && (
+            {(status.isLookingAway || status.isTalking || status.multipleFaces) && (
                 <div className="absolute top-20 bg-black/80 border-l-4 border-red-600 backdrop-blur-md px-6 py-4 shadow-2xl animate-bounce z-50">
                     <div className="text-red-500 font-bold uppercase tracking-widest text-xs mb-1">Warning</div>
                     <div className="text-lg font-light">
