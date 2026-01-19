@@ -3,7 +3,7 @@ import Timeline from './components/Timeline';
 import ControlPanel from './components/ControlPanel';
 import { IntegrityEvent, AppConfig, DetectionStatus } from './types';
 import { calculateHeadPose, calculateMouthOpenness, calculateHandFaceDistance } from './services/geometryUtils';
-import { analyzeFrameWithPuter, AIAnalysisResult } from './services/groqService';
+import { analyzeFrameWithPuter, AIAnalysisResult, MediaPipeStatus } from './services/groqService';
 
 // --- Constants ---
 const MAX_SCORE = 100;
@@ -318,7 +318,7 @@ const App: React.FC = () => {
         setIsAiAnalyzing(true);
         
         try {
-          const result = await analyzeFrameWithPuter(frame, undefined, true); // isPeriodic = true
+          const result = await analyzeFrameWithPuter(frame, undefined, true, status); // Pass real-time status
           setAiResult(result);
           
           // Apply lighter penalty for periodic detection
