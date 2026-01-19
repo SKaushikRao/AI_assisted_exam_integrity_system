@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import Timeline from './components/Timeline';
 import ControlPanel from './components/ControlPanel';
 import { IntegrityEvent, AppConfig, DetectionStatus } from './types';
-import { calculateHeadPose, calculateMouthOpenness, calculateHandFaceDistance } from './services/geometryUtils';
+import { calculateHeadPose, calculateMouthOpenness, calculateHandFaceDistance, detectTalkingActivity, detectEyeGaze, detectSuspiciousHeadMovement } from './services/geometryUtils';
 import { analyzeFrameWithPuter, AIAnalysisResult, MediaPipeStatus } from './services/groqService';
 
 // --- Constants ---
@@ -17,6 +17,7 @@ const INITIAL_CONFIG: AppConfig = {
   invisibleProctor: false,
   examMode: 'MCQ',
   demoMode: false, // Disable demo mode to test real detection
+  voiceActivityDetection: true, // Enable voice activity detection by default
 };
 
 const INITIAL_STATUS: DetectionStatus = {
@@ -26,6 +27,8 @@ const INITIAL_STATUS: DetectionStatus = {
   isLookingAway: false,
   multipleFaces: false,
   handNearFace: false,
+  suspiciousGaze: false,
+  suspiciousMovement: false,
 };
 
 const App: React.FC = () => {
@@ -41,7 +44,7 @@ const App: React.FC = () => {
   const [cameraPermission, setCameraPermission] = useState(false);
 
   // AI State
-  const [aiResult, setAiResult] = useState<AIAnalysisResult>({ status: 'INIT', message: "Ollama AI Ready - Local vision analysis", model: "Ollama (bakllava)" });
+  const [aiResult, setAiResult] = useState<AIAnalysisResult>({ status: 'INIT', message: "MediaPipe AI Ready - Advanced cheating detection", model: "MediaPipe (Enhanced)" });
   const [isAiAnalyzing, setIsAiAnalyzing] = useState(false);
 
   // Logic Timers
@@ -57,6 +60,7 @@ const App: React.FC = () => {
   
   const latestFaceResults = useRef<any>(null);
   const latestHandResults = useRef<any>(null);
+  const previousFaceLandmarks = useRef<any[]>([]);
 
   // --- Helper: Capture Screenshot (High Res for Logs) ---
   const captureScreenshot = useCallback((): string | undefined => {
@@ -192,20 +196,45 @@ const App: React.FC = () => {
         lookingAwayStartTime.current = null;
       }
 
-      // Talking
-      const mouthOpen = calculateMouthOpenness(landmarks);
-      if (mouthOpen > TALK_THRESHOLD) {
+      // Enhanced Talking Detection
+      const talkingDetection = detectTalkingActivity(landmarks, previousFaceLandmarks.current);
+      if (talkingDetection.isTalking && config.voiceActivityDetection) {
          currentStatus.isTalking = true;
          if (!talkingStartTime.current) talkingStartTime.current = Date.now();
          else if (Date.now() - talkingStartTime.current > 1500) {
-             deduction += 0.2;
+             deduction += 0.3; // Increased penalty for enhanced detection
              if (Date.now() - lastEventTime.current > 4000) {
-                 logEvent('TALKING', 'MEDIUM', 'Sustained mouth movement detected.');
+                 const confidence = Math.round(talkingDetection.confidence * 100);
+                 logEvent('TALKING', 'MEDIUM', `Talking detected (${confidence}% confidence).`);
              }
          }
       } else {
           talkingStartTime.current = null;
       }
+
+      // Enhanced Eye Gaze Detection
+      const eyeGaze = detectEyeGaze(landmarks);
+      if (eyeGaze.suspicious) {
+          currentStatus.suspiciousGaze = true;
+          deduction += 0.2;
+          if (Date.now() - lastEventTime.current > 5000) {
+              logEvent('SUSPICIOUS_GAZE', 'MEDIUM', `Suspicious eye gaze pattern detected.`);
+          }
+      }
+
+      // Enhanced Head Movement Detection
+      const headMovement = detectSuspiciousHeadMovement(landmarks, previousFaceLandmarks.current);
+      if (headMovement.rapidMovement || headMovement.lookingAround) {
+          currentStatus.suspiciousMovement = true;
+          deduction += 0.4;
+          if (Date.now() - lastEventTime.current > 5000) {
+              const movementType = headMovement.rapidMovement ? 'rapid head movement' : 'looking around frequently';
+              logEvent('SUSPICIOUS_MOVEMENT', 'HIGH', `${movementType} detected.`);
+          }
+      }
+
+      // Store current landmarks for next frame comparison
+      previousFaceLandmarks.current = [...landmarks];
 
       missingFaceStartTime.current = null;
 
@@ -290,29 +319,10 @@ const App: React.FC = () => {
 
   // --- AI Integration (Event-Triggered + Periodic) ---
   const triggerAIAnalysis = useCallback(async (eventType: string, frameData?: string) => {
-    if (config.demoMode || !cameraPermission) return;
-    
-    const frame = frameData || captureLowResFrame();
-    if (!frame) return;
-
-    console.log("Triggering event-based AI analysis:", eventType);
-    setIsAiAnalyzing(true);
-    
-    try {
-      const result = await analyzeFrameWithPuter(frame, eventType, false);
-      setAiResult(result);
-      
-      // If AI confirms suspicious activity, apply heavy penalty
-      if (result.status === 'SUSPICIOUS') {
-        logEvent('LOOKING_AWAY', 'HIGH', `AI Verified: ${result.message}`);
-        setScore(s => Math.max(0, s - 10)); // Heavy penalty for AI-confirmed cheating
-      }
-    } catch (error) {
-      console.error("AI analysis failed:", error);
-    } finally {
-      setIsAiAnalyzing(false);
-    }
-  }, [config.demoMode, cameraPermission, captureLowResFrame, logEvent]);
+    // DISABLED: Using MediaPipe-only detection to prevent random score drops
+    console.log("AI analysis disabled - Using MediaPipe detection only");
+    return;
+  }, []);
 
   // --- High-Severity Event Detection ---
   const previousStatusRef = useRef<DetectionStatus>(INITIAL_STATUS);
@@ -335,33 +345,10 @@ const App: React.FC = () => {
 
   // --- Periodic AI Analysis (Every 5 seconds) ---
   useEffect(() => {
-    if (config.demoMode || !cameraPermission) return;
-
-    const periodicInterval = setInterval(async () => {
-      const frame = captureLowResFrame();
-      if (frame) {
-        console.log("Running periodic AI analysis (5-second interval)");
-        setIsAiAnalyzing(true);
-        
-        try {
-          const result = await analyzeFrameWithPuter(frame, undefined, true, status); // Pass real-time status only
-          setAiResult(result);
-          
-          // Apply lighter penalty for periodic detection
-          if (result.status === 'SUSPICIOUS') {
-            logEvent('PERIODIC_ALERT', 'MEDIUM', `Periodic AI: ${result.message}`);
-            setScore(s => Math.max(0, s - 2)); // Lighter penalty for periodic detection
-          }
-        } catch (error) {
-          console.error("Periodic AI analysis failed:", error);
-        } finally {
-          setIsAiAnalyzing(false);
-        }
-      }
-    }, 5000); // Every 5 seconds
-
-    return () => clearInterval(periodicInterval);
-  }, [cameraPermission, config.demoMode, captureLowResFrame, logEvent]);
+    // DISABLED: Using MediaPipe-only detection to prevent random score drops
+    console.log("Periodic AI analysis disabled - Using MediaPipe detection only");
+    return () => {};
+  }, []);
 
   // --- Initialization Effect ---
   useEffect(() => {
@@ -561,23 +548,6 @@ const App: React.FC = () => {
             {/* Hands Detected Visual Indicator */}
             {status.handsDetected && (
                 <div className="absolute top-16 right-4 z-30 bg-orange-600 text-white px-3 py-2 rounded-full flex items-center space-x-2 animate-pulse">
-                    <span className="text-lg">🙌</span>
-                    <span className="text-sm font-bold">HANDS DETECTED</span>
-                </div>
-            )}
-
-            {/* Hand Near Face Warning */}
-            {status.handNearFace && (
-                <div className="absolute top-28 right-4 z-30 bg-yellow-600 text-white px-3 py-2 rounded-full flex items-center space-x-2 animate-pulse">
-                    <span className="text-lg">⚠️</span>
-                    <span className="text-sm font-bold">HAND NEAR FACE</span>
-                </div>
-            )}
-
-            {/* Invisible Proctor Warning Toast */}
-            {(status.isLookingAway || status.isTalking || status.multipleFaces) && (
-                <div className="absolute top-20 bg-black/80 border-l-4 border-red-600 backdrop-blur-md px-6 py-4 shadow-2xl animate-bounce z-50">
-                    <div className="text-red-500 font-bold uppercase tracking-widest text-xs mb-1">Warning</div>
                     <div className="text-lg font-light">
                         {status.multipleFaces ? "Multiple faces detected" : 
                          status.isTalking ? "Talking detected" : "Please look at the screen"}
