@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import Timeline from './components/Timeline';
 import ControlPanel from './components/ControlPanel';
+import Visualization from './components/Visualization';
 import { IntegrityEvent, AppConfig, DetectionStatus } from './types';
 import { calculateHeadPose, calculateMouthOpenness, calculateHandFaceDistance } from './services/geometryUtils';
 import { analyzeFrameWithPuter, AIAnalysisResult } from './services/groqService';
@@ -8,9 +9,9 @@ import { drawEnhancedHandMesh, analyzeHandActivity, HandAnalysis } from './servi
 
 // --- Constants ---
 const MAX_SCORE = 100;
-const YAW_THRESHOLD = 0.25; // Sensitivity for looking left/right
+const YAW_THRESHOLD = 0.20; // Sensitivity for looking left/right
 const PITCH_THRESHOLD = 0.20; // Sensitivity for looking up/down
-const TALK_THRESHOLD = 0.15; // Mouth openness ratio
+const TALK_THRESHOLD = 0.05; // Mouth openness ratio
 
 // --- Initial State ---
 const INITIAL_CONFIG: AppConfig = {
@@ -41,6 +42,8 @@ const App: React.FC = () => {
   const [config, setConfig] = useState<AppConfig>(INITIAL_CONFIG);
   const [isLoading, setIsLoading] = useState(true);
   const [cameraPermission, setCameraPermission] = useState(false);
+  const [showVisualization, setShowVisualization] = useState(false);
+  const [showSplash, setShowSplash] = useState(true);
 
   // AI State
   const [aiResult, setAiResult] = useState<AIAnalysisResult>({ status: 'INIT', message: "MediaPipe AI Ready - Local detection only", model: "MediaPipe (Enhanced)" });
@@ -290,6 +293,41 @@ const App: React.FC = () => {
                     fillMesh: false
                 });
                 
+                // Draw hand-face distance line if face is detected
+                if (faceResults && faceResults.multiFaceLandmarks && faceResults.multiFaceLandmarks.length > 0) {
+                    const faceLandmarks = faceResults.multiFaceLandmarks[0];
+                    const handWrist = landmarks[0]; // Hand wrist point
+                    const faceCenter = {
+                        x: faceLandmarks[1].x, // Nose tip as face center
+                        y: faceLandmarks[1].y
+                    };
+                    
+                    // Calculate distance for coloring
+                    const distance = Math.sqrt(
+                        Math.pow(handWrist.x - faceCenter.x, 2) + 
+                        Math.pow(handWrist.y - faceCenter.y, 2)
+                    );
+                    
+                    // Draw distance line with color based on proximity
+                    ctx.strokeStyle = distance < 0.15 ? '#ff0000' : // Red for too close
+                                   distance < 0.25 ? '#ff8800' : // Orange for warning
+                                   '#00ff00'; // Green for safe
+                    ctx.lineWidth = 2;
+                    ctx.setLineDash([5, 5]); // Dashed line
+                    ctx.beginPath();
+                    ctx.moveTo(handWrist.x * ctx.canvas.width, handWrist.y * ctx.canvas.height);
+                    ctx.lineTo(faceCenter.x * ctx.canvas.width, faceCenter.y * ctx.canvas.height);
+                    ctx.stroke();
+                    ctx.setLineDash([]); // Reset line dash
+                    
+                    // Draw distance text
+                    ctx.fillStyle = ctx.strokeStyle;
+                    ctx.font = '12px monospace';
+                    const midX = (handWrist.x + faceCenter.x) / 2 * ctx.canvas.width;
+                    const midY = (handWrist.y + faceCenter.y) / 2 * ctx.canvas.height;
+                    ctx.fillText(`d: ${(distance * 100).toFixed(1)}%`, midX + 10, midY);
+                }
+                
                 // Draw gesture label
                 if (handAnalysis.gesture.confidence > 0.5) {
                     const wrist = landmarks[0];
@@ -359,6 +397,12 @@ const App: React.FC = () => {
     // DISABLED: Using MediaPipe-only detection to prevent external AI interference
     console.log("AI analysis disabled - Using MediaPipe detection only");
     return () => {};
+  }, []);
+
+  // --- Splash Screen ---
+  useEffect(() => {
+    const timeout = setTimeout(() => setShowSplash(false), 1000);
+    return () => clearTimeout(timeout);
   }, []);
 
   // --- Initialization Effect ---
@@ -496,9 +540,41 @@ const App: React.FC = () => {
     return () => clearInterval(interval);
   }, [config.demoMode, logEvent]);
 
+  // Pause main camera while visualization is active
+  useEffect(() => {
+    if (showVisualization) {
+      if (cameraRef.current) cameraRef.current.stop();
+      return;
+    }
+
+    if (cameraRef.current && cameraPermission && !config.demoMode) {
+      cameraRef.current.start().catch((err: any) => {
+        console.error("Failed to restart camera", err);
+      });
+    }
+  }, [showVisualization, cameraPermission, config.demoMode]);
+
 
   return (
     <div className="flex flex-col h-screen w-screen bg-black text-white overflow-hidden font-sans selection:bg-red-900 selection:text-white">
+      {showSplash && (
+        <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black text-white">
+          <div className="text-3xl tracking-[0.4em] uppercase">sociothon_2026</div>
+        </div>
+      )}
+
+      {showVisualization && (
+        <Visualization onClose={() => setShowVisualization(false)} />
+      )}
+
+      <div className="absolute top-4 left-4 z-50">
+        <button
+          onClick={() => setShowVisualization(true)}
+          className="px-4 py-2 rounded-md bg-white/10 hover:bg-white/20 text-white text-sm border border-white/20"
+        >
+          Visualisation
+        </button>
+      </div>
       
       {/* --- Main Content Area --- */}
       <div className="flex flex-1 overflow-hidden relative">
