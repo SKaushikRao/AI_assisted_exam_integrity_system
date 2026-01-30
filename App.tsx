@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import Timeline from './components/Timeline';
 import ControlPanel from './components/ControlPanel';
 import Visualization from './components/Visualization';
+import StudyAssistant from './components/StudyAssistant';
 import { IntegrityEvent, AppConfig, DetectionStatus } from './types';
 import { calculateHeadPose, calculateMouthOpenness, calculateHandFaceDistance } from './services/geometryUtils';
 import { analyzeFrameWithPuter, AIAnalysisResult } from './services/groqService';
@@ -48,6 +49,15 @@ const App: React.FC = () => {
   // AI State
   const [aiResult, setAiResult] = useState<AIAnalysisResult>({ status: 'INIT', message: "MediaPipe AI Ready - Local detection only", model: "MediaPipe (Enhanced)" });
   const [isAiAnalyzing, setIsAiAnalyzing] = useState(false);
+
+  // Study Assistant State
+  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [fileContent, setFileContent] = useState<string>('');
+  const [summary, setSummary] = useState<string>('');
+  const [isProcessingFile, setIsProcessingFile] = useState(false);
+  const [showSummary, setShowSummary] = useState(false);
+  const [studyMode, setStudyMode] = useState(false);
+  const [focusStatus, setFocusStatus] = useState<'focused' | 'distracted' | 'idle'>('idle');
 
   // Logic Timers
   const lastEventTime = useRef<number>(0);
@@ -122,6 +132,143 @@ const App: React.FC = () => {
        console.log("ALERT:", description);
     }
   }, [config.invisibleProctor, captureScreenshot]);
+
+  // --- Study Assistant Functions ---
+  const handleFileUpload = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setUploadedFile(file);
+    setIsProcessingFile(true);
+
+    try {
+      let text = '';
+      
+      // Handle different file types
+      if (file.type === 'application/pdf') {
+        // Use advanced PDF text extraction
+        text = await extractPDFText(file);
+      } else {
+        // For text files and markdown
+        text = await file.text();
+      }
+      
+      setFileContent(text);
+
+      // Use enhanced summarization
+      const summary = await summarizeWithHuggingFace(text);
+      setSummary(summary);
+      setShowSummary(true);
+    } catch (error) {
+      console.error('Error processing file:', error);
+      setSummary('Error processing file. Please ensure the file contains readable text content and try again.');
+      setShowSummary(true);
+    } finally {
+      setIsProcessingFile(false);
+    }
+  }, []);
+
+  // Advanced PDF text extraction using PDF.js
+  const extractPDFText = async (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const fileReader = new FileReader();
+      
+      fileReader.onload = async () => {
+        try {
+          const typedArray = new Uint8Array(fileReader.result as ArrayBuffer);
+          
+          // Load PDF document
+          const pdf = await (window as any).pdfjsLib.getDocument(typedArray).promise;
+          let fullText = '';
+          
+          // Extract text from all pages
+          for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+            const page = await pdf.getPage(pageNum);
+            const textContent = await page.getTextContent();
+            const pageText = textContent.items
+              .map((item: any) => item.str)
+              .join(' ');
+            fullText += pageText + '\n';
+          }
+          
+          if (fullText.trim().length === 0) {
+            resolve(`[PDF Document: ${file.name}]\n\nThis PDF appears to contain only images or scanned content. The text extraction was successful but no readable text was found.\n\nRecommendations:\n• Try OCR software to convert scanned images to text\n• Use a PDF with embedded text content\n• Copy and paste text manually if possible\n\nDocument details:\n• Pages: ${pdf.numPages}\n• File size: ${Math.floor(file.size / 1024)}KB`);
+          } else {
+            resolve(fullText);
+          }
+        } catch (error) {
+          console.error('PDF extraction error:', error);
+          reject(error);
+        }
+      };
+      
+      fileReader.onerror = () => {
+        reject(new Error('Failed to read PDF file'));
+      };
+      
+      fileReader.readAsArrayBuffer(file);
+    });
+  };
+
+  // Hugging Face model-based summarization (offline)
+  const summarizeWithHuggingFace = async (text: string): Promise<string> => {
+    try {
+      // For now, we'll use an enhanced offline summarization
+      // In a real implementation, you could use transformers.js for local models
+      
+      const cleanText = text.replace(/\s+/g, ' ').trim();
+      const sentences = cleanText.split(/[.!?]+/).filter(s => s.trim().length > 15);
+      
+      if (sentences.length === 0) {
+        return 'No readable content found to summarize.';
+      }
+      
+      // Enhanced summarization algorithm
+      const summaryLength = Math.min(10, Math.max(4, Math.ceil(sentences.length * 0.3)));
+      
+      // Score sentences based on position and length
+      const scoredSentences = sentences.map((sentence, index) => {
+        const positionScore = 1 - (index / sentences.length); // Earlier sentences get higher score
+        const lengthScore = Math.min(sentence.length / 100, 1); // Prefer medium-length sentences
+        return {
+          sentence: sentence.trim(),
+          score: positionScore * 0.6 + lengthScore * 0.4
+        };
+      });
+      
+      // Sort by score and take top sentences
+      const topSentences = scoredSentences
+        .sort((a, b) => b.score - a.score)
+        .slice(0, summaryLength)
+        .map(item => item.sentence);
+      
+      // Maintain original order
+      const orderedSummary = topSentences.sort((a, b) => 
+        sentences.indexOf(a) - sentences.indexOf(b)
+      );
+      
+      const summary = orderedSummary.join('. ') + (orderedSummary.length > 0 ? '.' : '');
+      
+      return summary || 'Unable to generate summary from the content.';
+    } catch (error) {
+      console.error('Summarization error:', error);
+      return 'Error generating summary. Please try again.';
+    }
+  };
+
+  // --- Focus Monitoring with MediaPipe ---
+  const updateFocusStatus = useCallback((currentStatus: DetectionStatus) => {
+    if (!currentStatus.faceDetected) {
+      setFocusStatus('idle');
+      return;
+    }
+
+    if (currentStatus.isLookingAway || currentStatus.isTalking || currentStatus.handNearFace) {
+      setFocusStatus('distracted');
+    } else {
+      setFocusStatus('focused');
+    }
+  }, []);
 
   // --- Core Processing Loop (Draw & Analyze) ---
   const processFrame = useCallback(() => {
@@ -374,6 +521,11 @@ const App: React.FC = () => {
 
     ctx.restore();
     setStatus(currentStatus);
+    
+    // Update focus status for study mode
+    if (studyMode) {
+      updateFocusStatus(currentStatus);
+    }
 
     // Apply Score Updates
     setScore(prev => {
@@ -385,7 +537,7 @@ const App: React.FC = () => {
         return Math.max(0, Math.min(100, prev - (deduction * multiplier) + recovery));
     });
 
-  }, [config.examMode, config.invisibleProctor, logEvent, config.privacyMode]);
+  }, [config.examMode, config.invisibleProctor, logEvent, config.privacyMode, studyMode, updateFocusStatus]);
 
   const processFrameRef = useRef(processFrame);
   useEffect(() => {
@@ -567,12 +719,44 @@ const App: React.FC = () => {
         <Visualization onClose={() => setShowVisualization(false)} />
       )}
 
-      <div className="absolute top-4 left-4 z-50">
+      <StudyAssistant
+        summary={summary}
+        showSummary={showSummary}
+        studyMode={studyMode}
+        focusStatus={focusStatus}
+        isProcessingFile={isProcessingFile}
+        onFileUpload={handleFileUpload}
+        onStudyModeToggle={() => setStudyMode(!studyMode)}
+      />
+
+      <div className="absolute top-4 left-4 z-50 flex gap-4">
         <button
           onClick={() => setShowVisualization(true)}
-          className="px-4 py-2 rounded-md bg-white/10 hover:bg-white/20 text-white text-sm border border-white/20"
+          className="px-6 py-3 rounded-lg bg-gray-800 hover:bg-gray-700 text-white text-base font-semibold border-2 border-gray-600 shadow-lg transition-all hover:scale-105"
         >
           Visualisation
+        </button>
+        
+        <label className="px-6 py-3 rounded-lg bg-blue-800 hover:bg-blue-700 text-white text-base font-semibold border-2 border-blue-600 cursor-pointer shadow-lg transition-all hover:scale-105">
+          Upload Notes
+          <input
+            type="file"
+            accept=".txt,.md,.pdf"
+            onChange={handleFileUpload}
+            className="hidden"
+            disabled={isProcessingFile}
+          />
+        </label>
+        
+        <button
+          onClick={() => setStudyMode(!studyMode)}
+          className={`px-6 py-3 rounded-lg text-white text-base font-semibold border-2 shadow-lg transition-all hover:scale-105 ${
+            studyMode 
+              ? 'bg-green-700 hover:bg-green-600 border-green-600' 
+              : 'bg-gray-800 hover:bg-gray-700 border-gray-600'
+          }`}
+        >
+          {studyMode ? 'Study Mode ON' : 'Study Mode OFF'}
         </button>
       </div>
       

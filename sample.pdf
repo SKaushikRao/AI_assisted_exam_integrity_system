@@ -1,0 +1,94 @@
+%PDF-1.4
+1 0 obj
+<<
+/Title (Sample PDF Document)
+/Creator (Test Generator)
+/Producer (Test)
+/CreationDate (D:2025013112000)
+>>
+endobj
+2 0 obj
+<<
+/Length 44
+>>
+stream
+BT
+/Type /Font
+/Subtype /Type1C
+/BaseFont /Helvetica
+>>
+endstream
+endobj
+3 0 obj
+<<
+/Length 125
+>>
+stream
+BT
+/FontBBox 0 0 612 792
+/Matrix [1 0 0 1 0 0]
+/Resources <<
+/FontBBox 0 0 612 792
+>>
+>>
+/MediaBox [0 0 612 792]
+/Contents 4 0 R
+/Parent 2 0 R
+>>
+endstream
+endobj
+4 0 obj
+<<
+/Length 433
+>>
+stream
+BT
+/FontBBox 0 0 612 792
+/Matrix [1 0 0 1 0 0]
+/Resources <<
+/FontBBox 0 0 612 792
+>>
+>>
+/Contents 5 0 R
+>>
+endstream
+endobj
+5 0 obj
+<<
+/Length 288
+>>
+stream
+BT
+/FontBBox 0 0 612 792
+/Matrix [1 0 0 1 0 0]
+/Resources <<
+/FontBBox 0 0 612 792
+>>
+>>
+/Contents 6 0 R
+>>
+endstream
+endobj
+6 0 obj
+<<
+/Type /Catalog
+/Pages 2 0 R
+>>
+endobj
+xref
+0 7
+0000000000 65535 f
+0000000015 00000 n
+0000000031 00000 n
+0000000044 00000 n
+0000000055 00000 n
+0000000066 00000 n
+trailer
+<<
+/Size 127
+/Root 6 0 R
+/Info 8 0 R
+>>
+startxref
+0 7
+%%EOF
