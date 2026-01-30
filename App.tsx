@@ -711,7 +711,7 @@ const App: React.FC = () => {
     <div className="flex flex-col h-screen w-screen bg-black text-white overflow-hidden font-sans selection:bg-red-900 selection:text-white">
       {showSplash && (
         <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black text-white">
-          <div className="text-3xl tracking-[0.4em] uppercase">sociothon_2026</div>
+          <div className="text-3xl tracking-[0.4em] uppercase">Pixel_to_product_2026</div>
         </div>
       )}
 
